@@ -73,8 +73,8 @@ internal class DefaultMarkdownParserModule(
     @OptIn(InternalFactoryApi::class)
     private fun parseFallback(node: CommonMarkNode): Node? {
         return when (node) {
-            is HtmlBlock -> nodeFactory.paragraph(listOf(nodeFactory.text(node.literal)))
-            is HtmlInline -> nodeFactory.text(node.literal)
+            is HtmlBlock -> HtmlParser().parse(node.literal, nodeFactory)
+            is HtmlInline -> HtmlParser().parse(node.literal, nodeFactory)
             is Image -> nodeFactory.link(node.destination, listOf(nodeFactory.text(node.title ?: node.destination)))
             else -> null
         }
