@@ -9,6 +9,7 @@ import nl.jjkester.crt.api.factory.heading
 import nl.jjkester.crt.api.factory.link
 import nl.jjkester.crt.api.model.Node
 import nl.jjkester.crt.common.logging.logger
+import nl.jjkester.crt.html.HtmlParser
 import org.commonmark.node.BlockQuote
 import org.commonmark.node.BulletList
 import org.commonmark.node.Code
@@ -73,8 +74,8 @@ internal class DefaultMarkdownParserModule(
     @OptIn(InternalFactoryApi::class)
     private fun parseFallback(node: CommonMarkNode): Node? {
         return when (node) {
-            is HtmlBlock -> HtmlParser().parse(node.literal, nodeFactory)
-            is HtmlInline -> HtmlParser().parse(node.literal, nodeFactory)
+            is HtmlBlock -> HtmlParser(nodeFactory).parse(node.literal)
+            is HtmlInline -> HtmlParser(nodeFactory).parse(node.literal)
             is Image -> nodeFactory.link(node.destination, listOf(nodeFactory.text(node.title ?: node.destination)))
             else -> null
         }

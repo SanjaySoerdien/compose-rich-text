@@ -1,121 +1,118 @@
-/*
 package nl.jjkester.crt.html
-
-import nl.jjkester.crt.api.factory.NodeFactory
-import nl.jjkester.crt.api.model.Container
-import nl.jjkester.crt.api.model.Node
-import org.jsoup.Jsoup
-import org.jsoup.nodes.Element
-import org.jsoup.select.Elements
-
-internal class HtmlParser {
-    fun parse(htmlNode: String, nodeFactory: NodeFactory): Container
-    {
-        val html = Jsoup.parse(htmlNode)
-        val elements = html.childNodes()
-        return Container(
-            children = parseChildren(elements, nodeFactory),
-            metadata = null
-        )
-    }
-
-    private fun parseChildren(
-        elements: Elements,
-        nodeFactory: NodeFactory
-    ): MutableList<Node> {
-        val mutList: MutableList<Node.Block> = mutableListOf()
-        for (elem: Element in elements) {
-            val tag = elem.tagName()
-            val node = when (tag) {
-                "li" -> nodeFactory.listItem(childParser.parseBlockChildren(node))
-                "ul" -> nodeFactory.orderedList(childParser.parseListItemChildren(node))
-                "p" -> nodeFactory.paragraph(childParser.parseSpanChildren(node))
-                else -> throw (IllegalArgumentException("Unknown tag: $x"))
-            }
-            mutList.add(node)
-        }
-    }
-}*/
-
-package nl.jjkester.crt.markdown
 
 import nl.jjkester.crt.api.annotations.InternalFactoryApi
 import nl.jjkester.crt.api.factory.NodeFactory
 import nl.jjkester.crt.api.model.*
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
+import org.jsoup.nodes.TextNode
+import org.jsoup.nodes.Node as JSoupNode
 
 @OptIn(InternalFactoryApi::class)
-public class HtmlParser {
-    public fun parse(htmlNode: String, nodeFactory: NodeFactory): Container {
+public class HtmlParser(private val nodeFactory: NodeFactory) {
+
+    public fun parse(htmlNode: String): Container {
         val html = Jsoup.parse(htmlNode)
-        val elements = html.body().childNodes().filterIsInstance<Element>()
+        val elements = html.body().childNodes()
+
+        val result = elements.mapNotNull { parseNode(it) }.map {
+            when (it) {
+                is Node.Span -> nodeFactory.paragraph(listOf(it))
+                is Node.Block -> it
+            }
+        }
+
         return Container(
-            children = elements.map { parseBlock(it, nodeFactory) },
+            children = result,
             metadata = null
         )
     }
 
-    private fun parseBlock(
-        element: Element,
-        nodeFactory: NodeFactory
-    ): Node.Block {
-        val tag = element.tagName()
-
-        return when (tag) {
-            "ul" -> parseUnorderedList(element, nodeFactory)
-            "li" -> parseListItem(element, nodeFactory)
-            "h" -> nodeFactory.heading(Heading.Level.One, listOf(nodeFactory.text(element.text())), null)
-            "h2" -> nodeFactory.heading(Heading.Level.Two, listOf(nodeFactory.text(element.text())), null)
-            "h3" -> nodeFactory.heading(Heading.Level.Three, listOf(nodeFactory.text(element.text())), null)
-            "h4" -> nodeFactory.heading(Heading.Level.Four, listOf(nodeFactory.text(element.text())), null)
-            "h5" -> nodeFactory.heading(Heading.Level.Five, listOf(nodeFactory.text(element.text())), null)
-            "h6" -> nodeFactory.heading(Heading.Level.Six, listOf(nodeFactory.text(element.text())), null)
-            else -> throw IllegalArgumentException("Unknown tag: $tag")
+    private fun parseNode(
+        node: JSoupNode,
+    ): Node? {
+        return when (node) {
+            is TextNode -> parseTextNode(node)
+            is Element -> parseElement(node)
+            else -> parseRaw(node)
         }
     }
 
-    private fun parseSpan(
-        element: Element,
-        nodeFactory: NodeFactory
-    ): Node.Span {
-        val tag = element.tagName()
+    private fun parseRaw(node: JSoupNode): Node.Span {
+        return nodeFactory.text(node.outerHtml())
+    }
 
-        return when (tag) {
-            "p" -> nodeFactory.text(element.text(), null)
-            "a" -> parseLink(element, nodeFactory)
-//            "li" -> parseListItem(element, nodeFactory)
-            else -> throw IllegalArgumentException("Unknown tag: $tag")
+    private fun parseTextNode(textNode: TextNode): Node.Block? {
+        if (textNode.wholeText.isNullOrBlank()) {
+            return null
+        }
+
+        return nodeFactory.paragraph(listOf(nodeFactory.text(textNode.wholeText)))
+    }
+
+    private fun parseElement(element: Element): Node {
+        if (element.tagName().startsWith("h")) {
+            return parseHeader(element)
+        }
+
+        return when (element.tagName()) {
+            "ul" -> parseUnorderedList(element)
+            "li" -> parseListItem(element)
+            "p" -> parseParagraph(element)
+            "a" -> parseLink(element)
+            else -> parseRaw(element)
         }
     }
 
-    private fun parseUnorderedList(element: Element, nodeFactory: NodeFactory): UnorderedList {
+    private fun parseParagraph(element: Element): Node.Block {
+        val spans = mutableListOf<Node.Span>()
+
+        element.childNodes().forEach {
+            if (it is TextNode && !it.wholeText.isNullOrBlank()) {
+                spans.add(nodeFactory.text(it.wholeText))
+            }
+        }
+
+        return nodeFactory.paragraph(spans, null)
+    }
+
+    private fun parseUnorderedList(element: Element): UnorderedList {
         val listItems = mutableListOf<ListItem>()
 
         element.childNodes().filterIsInstance<Element>().forEach {
-            listItems.add(ListItem(listOf(parseBlock(it, nodeFactory)), null))
+            listItems.add(ListItem(listOf(parseElement(it)).filterIsInstance<Node.Block>(), null))
         }
 
         return UnorderedList(listItems, null)
     }
 
-    private fun parseListItem(element: Element, nodeFactory: NodeFactory): Container {
+    private fun parseListItem(element: Element): Container {
         val children = mutableListOf<Node.Block>()
 
         element.childNodes().filterIsInstance<Element>().forEach {
-            children.add(nodeFactory.paragraph(listOf(parseSpan(it, nodeFactory)), null))
+            val result = parseElement(it)
+
+            if (result is Node.Block) {
+                children.add(result)
+            } else if (result is Node.Span) {
+                children.add(nodeFactory.paragraph(listOf(result), null))
+            }
         }
 
         return nodeFactory.container(children.toList())
     }
 
-    private fun parseLink(element: Element, nodeFactory: NodeFactory): Node.Span {
+    private fun parseLink(element: Element): Node.Span {
         val href = element.attr("href")
 
         val children = mutableListOf<Node.Span>()
 
         element.childNodes().filterIsInstance<Element>().forEach {
-            children.add(parseSpan(it, nodeFactory))
+            val result = parseElement(it)
+
+            if (result is Node.Span) {
+                children.add(result)
+            }
         }
 
         children.add(nodeFactory.text(element.text()))
@@ -124,6 +121,40 @@ public class HtmlParser {
             Link.Destination(href),
             children.toList(),
             null
+        )
+    }
+
+    private fun parseHeader(element: Element): Node.Block {
+        val spans = mutableListOf<Node.Span>()
+
+        element.childNodes().forEach {
+            if (it is TextNode) {
+                spans.add(nodeFactory.text(it.wholeText))
+                return@forEach
+            }
+
+            if (it !is Element) return@forEach
+
+            val childElement = parseElement(it)
+
+            if (childElement is Node.Span) spans.add(childElement)
+        }
+
+
+        return nodeFactory.heading(
+            headingMap.get(element.tagName())!!,
+            spans.toList()
+        )
+    }
+
+    private companion object {
+        val headingMap = mapOf(
+            Pair("h1", Heading.Level.One),
+            Pair("h2", Heading.Level.Two),
+            Pair("h3", Heading.Level.Three),
+            Pair("h4", Heading.Level.Four),
+            Pair("h5", Heading.Level.Five),
+            Pair("h6", Heading.Level.Six),
         )
     }
 }
